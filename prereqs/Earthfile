@@ -1,0 +1,104 @@
+VERSION 0.6
+
+BUILD_ALPINE_PREREQ:
+    COMMAND
+    RUN apk add --no-cache \
+            build-base \
+            cmake \
+            autoconf \
+            automake \
+            libtool \
+            zlib-dev \
+            linux-headers \
+            -t build-tools && \
+        apk add --no-cache zlib
+
+BUILD_DEBIAN_PREREQ:
+    COMMAND
+    RUN set -eux; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            autoconf \
+            automake \
+            libtool \
+            ca-certificates \
+            zlib1g \
+            zlib1g-dev \
+            wget
+
+BUILD_LIBJPEG_TURBO:
+    COMMAND
+    ARG --required LIBJPEGTURBO_VERSION
+    ARG --required CODECS_INSTALL_PREFIX
+    GIT CLONE --branch tags/${LIBJPEGTURBO_VERSION} https://github.com/libjpeg-turbo/libjpeg-turbo.git libjpeg-turbo
+    WORKDIR libjpeg-turbo
+    RUN mkdir build && \
+        env CFLAGS="-g0" cmake -Bbuild -DCMAKE_INSTALL_PREFIX=${CODECS_INSTALL_PREFIX} && \
+        make -C build -j$(nproc) && \
+        make -C build install && \
+        cp jpegint.h ${CODECS_INSTALL_PREFIX}/include/jpegint.h && \
+        rm -Rf ${CODECS_INSTALL_PREFIX}/share
+    SAVE ARTIFACT ${CODECS_INSTALL_PREFIX} AS LOCAL codecs/libjpeg-turbo
+
+BUILD_LIBPNG:
+    COMMAND
+    ARG --required LIBPNG_VERSION
+    ARG --required CODECS_INSTALL_PREFIX
+    GIT CLONE --branch tags/${LIBPNG_VERSION} https://github.com/glennrp/libpng.git libpng
+    WORKDIR libpng
+	RUN ./configure --prefix ${CODECS_INSTALL_PREFIX} && make install && \
+        rm -Rf ${CODECS_INSTALL_PREFIX}/share
+    SAVE ARTIFACT ${CODECS_INSTALL_PREFIX} AS LOCAL codecs/libpng
+
+BUILD_LIBWEBP:
+    COMMAND
+    ARG --required LIBWEBP_VERSION
+    ARG --required CODECS_INSTALL_PREFIX
+    GIT CLONE --branch tags/${LIBWEBP_VERSION} https://github.com/webmproject/libwebp.git libwebp
+    WORKDIR libwebp
+	RUN ./autogen.sh && \
+        ./configure --prefix ${CODECS_INSTALL_PREFIX} && \
+        make install && \
+        rm -Rf ${CODECS_INSTALL_PREFIX}/share
+    SAVE ARTIFACT ${CODECS_INSTALL_PREFIX} AS LOCAL codecs/libwebp
+
+
+BUILD_OPENCV:
+    COMMAND
+    ARG --required OPENCV_VERSION
+    WORKDIR /build/opencv
+    RUN wget https://github.com/opencv/opencv/archive/refs/tags/${OPENCV_VERSION}.tar.gz && \
+        tar -xvf ${OPENCV_VERSION}.tar.gz && rm ${OPENCV_VERSION}.tar.gz && \
+        cd opencv-${OPENCV_VERSION} && \
+        mkdir build && cd build && \
+        cmake .. \ 
+            -D CMAKE_BUILD_TYPE=RELEASE \
+            -D CMAKE_INSTALL_PREFIX=/opt/opencv \
+            -D BUILD_opencv_apps=OFF \
+            -D BUILD_opencv_calib3d=OFF \
+            -D BUILD_opencv_dnn=OFF \
+            -D BUILD_opencv_gapi=OFF \
+            -D BUILD_opencv_highgui=OFF \
+            -D BUILD_opencv_java_bindings_generator=OFF \
+            -D BUILD_opencv_flann=ON \
+            -D BUILD_opencv_imgcodecs=OFF \
+            -D BUILD_opencv_video=OFF \
+            -D BUILD_opencv_videoio=OFF \
+            -D BUILD_DOCS=OFF \
+            -D BUILD_EXAMPLES=OFF \
+            -D BUILD_OPENJPEG=OFF \
+            -D BUILD_TIFF=OFF \
+            -D BUILD_PACKAGE=OFF \
+            -D BUILD_TESTS=OFF \
+            -D BUILD_PERF_TESTS=OFF \
+            -D WITH_TBB=NO \
+            -D WITH_FFMPEG=NO \ 
+            -D WITH_IPP=NO \
+            -D WITH_JASPER=NO \
+            -D WITH_OPENEXR=NO \
+            -D WITH_OPENJPEG=NO \
+            -D WITH_TIFF=NO \
+        && make -j $(nproc) all
+    SAVE ARTIFACT /build/opencv AS LOCAL opencv
