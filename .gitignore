@@ -1,2 +1,4 @@
 codecs/*
 opencv/*
+*.local.*
+*.local

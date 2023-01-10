@@ -1,4 +1,74 @@
 VERSION 0.6
+ARG CODECS_INSTALL_PREFIX="/opt/codecs"
+
+base-image:
+    ARG --required OS_TARGET
+    ARG BRANCH
+    FROM busybox
+    ARG DATE=$(date +%Y%m%d)
+    FROM +barebones-${OS_TARGET}
+    COPY +libjpeg-turbo/codecs ${CODECS_INSTALL_PREFIX}
+    COPY +libpng/codecs ${CODECS_INSTALL_PREFIX}
+    COPY +libwebp/codecs ${CODECS_INSTALL_PREFIX}
+    COPY --keep-ts +opencv/opencv /build/opencv
+
+    IF [ -z "${BRANCH}" ]
+        SAVE IMAGE omicsautomation.azurecr.io/pathds/earthly/base:${OS_TARGET}
+        SAVE IMAGE omicsautomation.azurecr.io/pathds/earthly/base:${OS_TARGET}-${DATE}
+    ELSE
+        SAVE IMAGE --push omicsautomation.azurecr.io/pathds/earthly/base:${BRANCH}-${OS_TARGET}
+        SAVE IMAGE --push omicsautomation.azurecr.io/pathds/earthly/base:${BRANCH}-${OS_TARGET}-${DATE}
+    END
+
+
+opencv:
+    ARG --required OPENCV_VERSION
+    ARG --required OS_TARGET
+    FROM +prereqs-${OS_TARGET}
+    DO +BUILD_OPENCV --OPENCV_VERSION=${OPENCV_VERSION}
+
+
+libjpeg-turbo:
+    ARG --required LIBJPEGTURBO_VERSION
+    ARG --required OS_TARGET
+    FROM +prereqs-${OS_TARGET}
+    DO +BUILD_LIBJPEG_TURBO --LIBJPEGTURBO_VERSION=${LIBJPEGTURBO_VERSION} --CODECS_INSTALL_PREFIX=${CODECS_INSTALL_PREFIX}
+
+libpng:
+    ARG --required LIBPNG_VERSION
+    ARG --required OS_TARGET
+    FROM +prereqs-${OS_TARGET}
+    DO +BUILD_LIBPNG --LIBPNG_VERSION=${LIBPNG_VERSION} --CODECS_INSTALL_PREFIX=${CODECS_INSTALL_PREFIX}
+
+libwebp:
+    ARG --required LIBWEBP_VERSION
+    ARG --required OS_TARGET
+    FROM +prereqs-${OS_TARGET}
+    DO +BUILD_LIBWEBP --LIBWEBP_VERSION=${LIBWEBP_VERSION} --CODECS_INSTALL_PREFIX=${CODECS_INSTALL_PREFIX}
+
+prereqs-alpine:
+    ARG --required ALPINE_VERSION
+    FROM alpine:${ALPINE_VERSION}
+    DO +BUILD_ALPINE_PREREQ
+
+prereqs-debian:
+    ARG --required DEBIAN_VERSION
+    FROM debian:${DEBIAN_VERSION}-slim
+    DO +BUILD_DEBIAN_PREREQ
+
+barebones-alpine:
+    ARG --required ALPINE_VERSION
+    FROM alpine:${ALPINE_VERSION}
+    RUN apk add --no-cache zlib
+
+barebones-debian:
+    ARG --required DEBIAN_VERSION
+    FROM debian:${DEBIAN_VERSION}
+    RUN apt-get update && \
+        apt-get install -y --no-install-recommends \
+            zlib1g \
+            wget && \
+        rm -rf /var/lib/apt/lists/*
 
 BUILD_ALPINE_PREREQ:
     COMMAND
@@ -10,6 +80,7 @@ BUILD_ALPINE_PREREQ:
             libtool \
             zlib-dev \
             linux-headers \
+            openblas-dev \
             -t build-tools && \
         apk add --no-cache zlib
 
@@ -26,6 +97,7 @@ BUILD_DEBIAN_PREREQ:
             ca-certificates \
             zlib1g \
             zlib1g-dev \
+            libopenblas-dev \
             wget
 
 BUILD_LIBJPEG_TURBO:
@@ -68,14 +140,16 @@ BUILD_LIBWEBP:
 BUILD_OPENCV:
     COMMAND
     ARG --required OPENCV_VERSION
-    WORKDIR /build/opencv
+    WORKDIR /build/
+    ENV OPENCV_BUILD_OPTS="-D CMAKE_BUILD_TYPE=RELEASE \
+        -D CMAKE_INSTALL_PREFIX=/opt/opencv "
     RUN wget https://github.com/opencv/opencv/archive/refs/tags/${OPENCV_VERSION}.tar.gz && \
         tar -xvf ${OPENCV_VERSION}.tar.gz && rm ${OPENCV_VERSION}.tar.gz && \
-        cd opencv-${OPENCV_VERSION} && \
-        mkdir build && cd build && \
+        mv opencv-${OPENCV_VERSION} opencv
+    WORKDIR /build/opencv
+    RUN mkdir build && cd build && \
         cmake .. \ 
-            -D CMAKE_BUILD_TYPE=RELEASE \
-            -D CMAKE_INSTALL_PREFIX=/opt/opencv \
+            ${OPENCV_BUILD_OPTS} \
             -D BUILD_opencv_apps=OFF \
             -D BUILD_opencv_calib3d=OFF \
             -D BUILD_opencv_dnn=OFF \
@@ -89,6 +163,9 @@ BUILD_OPENCV:
             -D BUILD_DOCS=OFF \
             -D BUILD_EXAMPLES=OFF \
             -D BUILD_OPENJPEG=OFF \
+            -D BUILD_JPEG=OFF \
+            -D BUILD_PNG=OFF \
+            -D BUILD_WBP=OFF \
             -D BUILD_TIFF=OFF \
             -D BUILD_PACKAGE=OFF \
             -D BUILD_TESTS=OFF \
@@ -96,9 +173,12 @@ BUILD_OPENCV:
             -D WITH_TBB=NO \
             -D WITH_FFMPEG=NO \ 
             -D WITH_IPP=NO \
-            -D WITH_JASPER=NO \
-            -D WITH_OPENEXR=NO \
-            -D WITH_OPENJPEG=NO \
-            -D WITH_TIFF=NO \
+            -D WITH_JASPER=OFF \
+            -D WITH_OPENEXR=OFF \
+            -D WITH_OPENJPEG=OFF \
+            -D WITH_JPEG=OFF \
+            -D WITH_WEBP=OFF \
+            -D WITH_PNG=OFF \
+            -D WITH_TIFF=OFF \
         && make -j $(nproc) all
-    SAVE ARTIFACT /build/opencv AS LOCAL opencv
+    SAVE ARTIFACT --keep-ts /build/opencv AS LOCAL opencv

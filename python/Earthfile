@@ -1,36 +1,9 @@
 VERSION 0.6
 IMPORT ./prereqs AS prereqs
-IMPORT ./python AS python
 
 # Required for pushing new images
 ARG BRANCH
 ARG CODECS_INSTALL_PREFIX="/opt/codecs"
-
-python-base:
-    ARG --required OS_TARGET
-    ARG --required PY_VERSION
-    ARG ALPINE_VERSION
-    ARG DEBIAN_VERSION
-    ARG --required NUMPY_VERSION
-    ARG --required LIBJPEGTURBO_VERSION
-    ARG --required LIBPNG_VERSION
-    ARG --required LIBWEBP_VERSION
-    ARG --required OPENCV_VERSION
-    FROM python+python-base \
-        --BRANCH=${BRANCH} \
-        --NUMPY_VERSION=${NUMPY_VERSION} \
-        --OS_TARGET=${OS_TARGET} \
-        --PY_VERSION=${PY_VERSION} \
-        --ALPINE_VERSION=${ALPINE_VERSION} \
-        --DEBIAN_VERSION=${DEBIAN_VERSION} \
-        --LIBJPEGTURBO_VERSION=${LIBJPEGTURBO_VERSION} \
-        --LIBPNG_VERSION=${LIBPNG_VERSION} \
-        --LIBWEBP_VERSION=${LIBWEBP_VERSION} \
-        --OPENCV_VERSION=${OPENCV_VERSION} \
-        --CODECS_INSTALL_PREFIX=${CODECS_INSTALL_PREFIX}
-    SAVE IMAGE foo:latest
-    SAVE ARTIFACT ${CODECS_INSTALL_PREFIX}
-    SAVE ARTIFACT /build/opencv
 
 prereqs-base:
     ARG --required OS_TARGET
@@ -54,20 +27,45 @@ prereqs-base:
     SAVE ARTIFACT /build/opencv
 
 
-foo-base:
+python-base:
     ARG --required OS_TARGET
     ARG --required PY_VERSION
+    ARG --required NUMPY_VERSION
     FROM busybox
     IF [ "${OS_TARGET}" = "alpine" ] 
         ARG --required ALPINE_VERSION
-        FROM python:${PYTHON_VERSION_MINOR}-alpine${ALPINE_VERSION}
+        FROM python:${PY_VERSION}-alpine${ALPINE_VERSION}
     ELSE 
         IF [ "${OS_TARGET}" = "debian" ]
             ARG --required DEBIAN_VERSION
-            FROM python:${PYTHON_VERSION_MINOR}-slim-${DEBIAN_VERSION}
+            FROM python:${PY_VERSION}-slim-${DEBIAN_VERSION}
         ELSE
             RUN echo "Invalid OS provided." 1>&2 && exit 1
         END
     END
+    RUN pip install --no-cache-dir --no-binary :all: numpy==${NUMPY_VERSION}
 
+numpy:
+    ARG --required NUMPY_VERSION
+    FROM +python-base
+    GIT CLONE --branch tags/v${NUMPY_VERSION} https://github.com/numpy/numpy numpy
+    WORKDIR numpy
+    # RUN export CFLAGS="-g0" && \
+    #     pip install --no-cache-dir . && \
+    #     unset CFLAGS
+    SAVE IMAGE foo:latest
 
+python-opencv:
+    ARG --required NUMPY_VERSION
+    ARG --required PY_VERSION
+    FROM +python-base
+    COPY +prereqs-base/opencv /build/opencv
+    WORKDIR /build/opencv/build
+    RUN cmake ..\ 
+            -D BUILD_opencv_python3=ON \
+            -D PYTHON3_NUMPY_INCLUDE_DIRS=/usr/local/lib/python${PY_VERSION}/site-packages/numpy/core/include \
+            -D PYTHON3_NUMPY_VERSION="${NUMPY_VERSION}" \
+            -D CMAKE_INSTALL_PREFIX="/opt/opencv" \
+            -D PYTHON_DEFAULT_EXECUTABLE="/usr/local/bin/python"; \
+        make install;
+    RUN 
