@@ -13,7 +13,7 @@ prereqs-base:
     ARG --required LIBPNG_VERSION
     ARG --required LIBWEBP_VERSION
     ARG --required OPENCV_VERSION
-    FROM prereqs+base-image \
+    FROM prereqs+base-image-ts \
         --BRANCH=${BRANCH} \
         --OS_TARGET=${OS_TARGET} \
         --ALPINE_VERSION=${ALPINE_VERSION} \
@@ -24,48 +24,88 @@ prereqs-base:
         --OPENCV_VERSION=${OPENCV_VERSION} \
         --CODECS_INSTALL_PREFIX=${CODECS_INSTALL_PREFIX}
     SAVE ARTIFACT ${CODECS_INSTALL_PREFIX}
-    SAVE ARTIFACT /build/opencv
+    SAVE ARTIFACT --keep-ts /build/opencv
 
 
 python-base:
     ARG --required OS_TARGET
     ARG --required PY_VERSION
-    ARG --required NUMPY_VERSION
     FROM busybox
     IF [ "${OS_TARGET}" = "alpine" ] 
         ARG --required ALPINE_VERSION
         FROM python:${PY_VERSION}-alpine${ALPINE_VERSION}
+        RUN apk add --no-cache openblas libstdc++ libpq
     ELSE 
         IF [ "${OS_TARGET}" = "debian" ]
             ARG --required DEBIAN_VERSION
             FROM python:${PY_VERSION}-slim-${DEBIAN_VERSION}
+            RUN apt-get update && \
+                apt-get install -y --no-install-recommends \
+                    libstdc++6 \
+                    libopenblas-base \
+                    libpq5 && \
+                rm -rf /var/lib/apt/lists/*
         ELSE
             RUN echo "Invalid OS provided." 1>&2 && exit 1
         END
     END
-    RUN pip install --no-cache-dir --no-binary :all: numpy==${NUMPY_VERSION}
 
-numpy:
-    ARG --required NUMPY_VERSION
+python-base-builder:
+    ARG --required OS_TARGET
     FROM +python-base
-    GIT CLONE --branch tags/v${NUMPY_VERSION} https://github.com/numpy/numpy numpy
-    WORKDIR numpy
-    # RUN export CFLAGS="-g0" && \
-    #     pip install --no-cache-dir . && \
-    #     unset CFLAGS
-    SAVE IMAGE foo:latest
-
-python-opencv:
+    IF [ "${OS_TARGET}" = "alpine" ]
+        DO prereqs+BUILD_ALPINE_PREREQ
+    ELSE
+        DO prereqs+BUILD_DEBIAN_PREREQ
+    END
+    RUN pip install "Cython>=0.29.30,<3.0"
+    
+numpy-opencv-build:
     ARG --required NUMPY_VERSION
     ARG --required PY_VERSION
-    FROM +python-base
-    COPY +prereqs-base/opencv /build/opencv
+    FROM +python-base-builder
+    COPY +prereqs-base/codecs ${CODECS_INSTALL_PREFIX}
+    RUN ln -s /opt/codecs/include/* /usr/include
+    RUN ln -s /opt/codecs/lib64/*.so /usr/lib
+    RUN ln -s /opt/codecs/lib/*.so /usr/lib
+    ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/opt/codecs/lib64/:/opt/codecs/lib/"
+    RUN NPY_NUM_BUILD_JOBS=$(nproc) pip install --no-cache-dir --no-binary :all: numpy==${NUMPY_VERSION} psycopg2 pillow --user
+    COPY --keep-ts +prereqs-base/opencv /build/opencv
     WORKDIR /build/opencv/build
-    RUN cmake ..\ 
+    RUN cmake .. \ 
             -D BUILD_opencv_python3=ON \
-            -D PYTHON3_NUMPY_INCLUDE_DIRS=/usr/local/lib/python${PY_VERSION}/site-packages/numpy/core/include \
+            -D PYTHON3_NUMPY_INCLUDE_DIRS="${HOME}/.local/lib/python${PY_VERSION}/site-packages/numpy/core/include" \
             -D PYTHON3_NUMPY_VERSION="${NUMPY_VERSION}" \
             -D CMAKE_INSTALL_PREFIX="/opt/opencv" \
-            -D PYTHON_DEFAULT_EXECUTABLE="/usr/local/bin/python"; \
-        make install;
-    RUN 
+            -D PYTHON_DEFAULT_EXECUTABLE="/usr/local/bin/python" \
+            -D __INSTALL_PATH_PYTHON3="${HOME}/.local/lib/python${PY_VERSION}/site-packages" \
+        && make -j $(nproc) install \
+        && mv "/cv2" "${HOME}/.local/lib/python${PY_VERSION}/site-packages/cv2"
+    SAVE ARTIFACT /opt/opencv
+    SAVE ARTIFACT /root/.local/lib/python${PY_VERSION}/site-packages
+
+pathds-python:
+    ARG BRANCH
+    ARG --required OS_TARGET
+    ARG --required PY_VERSION
+    FROM +python-base
+    COPY +numpy-opencv-build/opencv /opt/opencv
+    COPY +numpy-opencv-build/site-packages /usr/local/lib/python${PY_VERSION}/site-packages
+    COPY +prereqs-base/codecs ${CODECS_INSTALL_PREFIX}
+    ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/opt/codecs/lib64/:/opt/codecs/lib/"
+    IF [ -z "${BRANCH}" ]
+        SAVE IMAGE omicsautomation.azurecr.io/pathds/earthly/python:${OS_TARGET}-py${PY_VERSION}
+    ELSE
+        SAVE IMAGE --push omicsautomation.azurecr.io/pathds/earthly/python:${BRANCH}-${OS_TARGET}-py${PY_VERSION}
+    END 
+
+
+pathds-python-ts:
+    FROM +pathds-python
+    ARG DATE=$(date +%Y%m%d)
+    IF [ -z "${BRANCH}" ]
+        SAVE IMAGE omicsautomation.azurecr.io/pathds/earthly/python:${OS_TARGET}-py${PY_VERSION}-${DATE}
+    ELSE
+        SAVE IMAGE --push omicsautomation.azurecr.io/pathds/earthly/python:${BRANCH}-${OS_TARGET}-py${PY_VERSION}-${DATE}
+    END 
+

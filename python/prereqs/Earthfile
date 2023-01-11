@@ -1,11 +1,19 @@
 VERSION 0.6
 ARG CODECS_INSTALL_PREFIX="/opt/codecs"
 
+base-image-ts:
+    FROM +base-image
+    ARG DATE=$(date +%Y%m%d)
+    IF [ -z "${BRANCH}" ]
+        SAVE IMAGE omicsautomation.azurecr.io/pathds/earthly/base:${OS_TARGET}-${DATE}
+    ELSE
+        SAVE IMAGE --push omicsautomation.azurecr.io/pathds/earthly/base:${BRANCH}-${OS_TARGET}-${DATE}
+    END
+
 base-image:
     ARG --required OS_TARGET
     ARG BRANCH
     FROM busybox
-    ARG DATE=$(date +%Y%m%d)
     FROM +barebones-${OS_TARGET}
     COPY +libjpeg-turbo/codecs ${CODECS_INSTALL_PREFIX}
     COPY +libpng/codecs ${CODECS_INSTALL_PREFIX}
@@ -14,12 +22,9 @@ base-image:
 
     IF [ -z "${BRANCH}" ]
         SAVE IMAGE omicsautomation.azurecr.io/pathds/earthly/base:${OS_TARGET}
-        SAVE IMAGE omicsautomation.azurecr.io/pathds/earthly/base:${OS_TARGET}-${DATE}
     ELSE
         SAVE IMAGE --push omicsautomation.azurecr.io/pathds/earthly/base:${BRANCH}-${OS_TARGET}
-        SAVE IMAGE --push omicsautomation.azurecr.io/pathds/earthly/base:${BRANCH}-${OS_TARGET}-${DATE}
     END
-
 
 opencv:
     ARG --required OPENCV_VERSION
@@ -81,6 +86,7 @@ BUILD_ALPINE_PREREQ:
             zlib-dev \
             linux-headers \
             openblas-dev \
+            libpq-dev \
             -t build-tools && \
         apk add --no-cache zlib
 
@@ -98,6 +104,7 @@ BUILD_DEBIAN_PREREQ:
             zlib1g \
             zlib1g-dev \
             libopenblas-dev \
+            libpq-dev \
             wget
 
 BUILD_LIBJPEG_TURBO:
@@ -141,15 +148,14 @@ BUILD_OPENCV:
     COMMAND
     ARG --required OPENCV_VERSION
     WORKDIR /build/
-    ENV OPENCV_BUILD_OPTS="-D CMAKE_BUILD_TYPE=RELEASE \
-        -D CMAKE_INSTALL_PREFIX=/opt/opencv "
     RUN wget https://github.com/opencv/opencv/archive/refs/tags/${OPENCV_VERSION}.tar.gz && \
         tar -xvf ${OPENCV_VERSION}.tar.gz && rm ${OPENCV_VERSION}.tar.gz && \
         mv opencv-${OPENCV_VERSION} opencv
     WORKDIR /build/opencv
     RUN mkdir build && cd build && \
         cmake .. \ 
-            ${OPENCV_BUILD_OPTS} \
+            -D CMAKE_BUILD_TYPE=RELEASE \
+            -D CMAKE_INSTALL_PREFIX=/opt/opencv \
             -D BUILD_opencv_apps=OFF \
             -D BUILD_opencv_calib3d=OFF \
             -D BUILD_opencv_dnn=OFF \
@@ -170,6 +176,8 @@ BUILD_OPENCV:
             -D BUILD_PACKAGE=OFF \
             -D BUILD_TESTS=OFF \
             -D BUILD_PERF_TESTS=OFF \
+            -D WITH_GTK=OFF \
+            -D WITH_WITH_WIN32UI=OFF \
             -D WITH_TBB=NO \
             -D WITH_FFMPEG=NO \ 
             -D WITH_IPP=NO \
